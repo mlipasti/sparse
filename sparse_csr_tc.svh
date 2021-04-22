@@ -12,6 +12,12 @@ class sparse_csr_tc #(parameter ROWS=1024,
 
    // A is ROWSxCOLS, B is COLSxROWS, C is ROWSxROWS
 
+   sparse_csr #(.ROWS(ROWS),.COLS(COLS),.DENSITY(DENSITY)
+                ) A;
+   sparse_csr #(.ROWS(COLS),.COLS(ROWS),.DENSITY(DENSITY)
+                ) B;
+   
+   // CSR for C = AxB
    int nnz;
    int rows;
    int cols;
@@ -19,70 +25,114 @@ class sparse_csr_tc #(parameter ROWS=1024,
    int colindex[];
    bit [63:0] value[];
    
-   
    function new();
+      int     currnz;
       rows = ROWS;
       cols = COLS;
+
+      A = new();
+      B = new();
+
+      // could instead estimate worst case size of C per
+      // Matthias Boehm et al. 2014
+      // SystemML’s Optimizer: Plan Generation for Large-Scale Machine Learning Programs.
+      // IEEE Data Eng. Bull. 37, 3 (2014), 52–62
+      // but for now I will traverse A & B twice, first to count nnz, then to multiply
+          
       nnz = 0;
-
-      int 
-      
-      bit mask[ROWS][COLS];
-      mask = '{default:0};
-
-      // determine NNZ values in bitmask
-      for(int Row=0;Row<rows;++Row) begin
-	     for(int Col=0;Col<cols;++Col) begin
-            randcase
-              DENSITY: begin
-                 mask[Row][Col] = 1'b1;
-                 nnz += 1;
-              end
-              ISZERO:
-                mask[Row][Col] = 1'b0;
-            endcase // randcase
-         end
-      end // for (int Row=0;Row<rows;++Row)
+      for(int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow)) begin
+         for(int Bcol=0;Bcol<B.cols;++Bcol) begin
+            for(int Acolpos=A.firstcolpos(Arow);Acolpos!=-1;Acolpos=A.nextcolpos(Arow,Acolpos)) begin
+               if (B.getpos(A.getcol(Acolpos),Bcol) != -1) begin
+                  ++nnz; // found one partial product; assume no cancellation errors
+                  break; // skip to next col of B
+               end // if
+            end // for(int Acolpos
+         end // for(int Bcol
+      end // for(int Arow
 
       // allocate space in colindex and value
       colindex = new [nnz];
       value = new [nnz];
 
-      // populate CSR structures
-      int currnz = 0;
-      for(int Row=0;Row<rows;++Row) begin
-         rowptr[Row] = currnz;
-	     for(int Col=0;Col<cols;++Col) begin
-            if (mask[Row][Col]) begin
-               colindex[currnz] = Col;
-               value[currnz] = randomreal();
-               currnz = currnz + 1;
+      // perform actual matrix multiplication
+      //for(int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow)) begin
+      currnz = 0;
+      for(int Arow=0;Arow<A.rows;++Arow) begin
+         for(int Bcol=0;Bcol<B.cols;++Bcol) begin
+            real partialproduct = 0.0;
+            bit  nz = 1'b0;
+            for(int Acolpos=A.firstcolpos(Arow);Acolpos!=-1;Acolpos=A.nextcolpos(Arow,Acolpos)) begin
+               int Bcolpos = B.getpos(A.getcol(Acolpos),Bcol);
+               if (Bcolpos != -1) begin
+                  partialproduct += $bitstoreal(A.getval(Acolpos)) * $bitstoreal(B.getval(Bcolpos));
+               end
             end
-         end
-      end
-      rowptr[rows] = currnz;
+            if (nz) begin
+               value[currnz] = $realtobits(partialproduct);
+               colindex[currnz] = Bcol;
+               ++currnz;
+            end // if (nz)
+         end // for (int Bcol=0;Bcol<B.cols;++Bcol)
+         rowptr[Arow] = currnz;
+      end // for (int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow))
+      
+      assert(currnz == nnz);
+
    endfunction: new
 
-   // access functions
+   function void dump();
+      int maxrows = (A.rows > B.rows) ? A.rows : B.rows;
+      // display A,B,C for debugging purposes
+      $display("C = A x B");
+      for(int Row=0;Row<maxrows;++Row) begin
+         for(int Col=0;Col<cols;++Col) begin
+            int pos = getpos(Row,Col);
+            real val = (pos != -1) ? $bitstoreal(getval(pos)) : 0.0;
+            if (Row > rows)
+              $write("      ");
+            else
+              $write("%5.0f ",val);
+         end
+         $write("  ");
+         for(int Col=0;Col<A.cols;++Col) begin
+            int pos = A.getpos(Row,Col);
+            real val = (pos != -1) ? $bitstoreal(A.getval(pos)) : 0.0;
+            if (Row > A.rows)
+              $write("      ");
+            else
+              $write("%5.0f ",val);
+         end
+         $write("  ");
+         for(int Col=0;Col<B.cols;++Col) begin
+            int pos = B.getpos(Row,Col);
+            real val = (pos != -1) ? $bitstoreal(B.getval(pos)) : 0.0;
+            if (Row > B.rows)
+              $write("      ");
+            else
+              $write("%5.0f ",val);
+         end
+         $write("\n");
+      end // for (int Row=0;Row<DIM;++Row)
+   endfunction: dump
 
-
-   // generate random double value:
-   // 1 bit sign, 11 bit exponent, 52 bit fraction
-   // should be easy to modify for single precision:
-   // (1 bit sign, 8 bit exponent, 23 bit fraction)
-   function bit [63:0] randomreal();
-      bit sign = $urandom() & 1'b1;
-      bit [10:0] exp = $urandom() & {11{1'b1}};
-      bit [51:0] frac = {$urandom() & {20{1'b1}},$urandom()};
-      // get rid of denorms (0 exp, nonzero frac)
-      if (exp == 11'b0)
-        frac = 52'b0;
-      // get rid of NaN/infinity (max exp)
-      if (exp == 11'd2047) // 255 for SP
-        exp = 11'd2046;
-      return {sign,exp,frac};
-   endfunction // randomreal
+   function int getpos(int row, int col);
+      for(int currpos=rowptr[row]; (currpos < rowptr[row+1]) && (colindex[currpos] <= col); ++currpos) begin
+         if (colindex[currpos] == col)
+           return currpos;
+      end
+      return -1; // flags that entry is not found, value implicitly zero
+   endfunction: getpos
+   
+   // hackish; refactor so that C is also a sparse_csr
+   function int getcol(int pos);
+      return colindex[pos];
+   endfunction: getcol
+   
+   function bit [63:0] getval(int pos);
+      return value[pos];
+   endfunction: getval
       
-endclass // sparse_csr
+endclass // sparse_csr_tc
 
 
