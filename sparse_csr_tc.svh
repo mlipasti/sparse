@@ -28,10 +28,15 @@ class sparse_csr_tc #(parameter ROWS=1024,
    function new();
       int     currnz;
       rows = ROWS;
-      cols = COLS;
+      cols = ROWS;
 
       A = new();
+      //$display("Matrix A");
+      //A.dump();
+      
       B = new();
+      //$display("Matrix B");
+      //B.dump();
 
       // could instead estimate worst case size of C per
       // Matthias Boehm et al. 2014
@@ -41,10 +46,16 @@ class sparse_csr_tc #(parameter ROWS=1024,
           
       nnz = 0;
       for(int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow)) begin
+      //for(int Arow=0;Arow<A.rows;++Arow) begin
+         //$display("Row %d of A",Arow);
          for(int Bcol=0;Bcol<B.cols;++Bcol) begin
             for(int Acolpos=A.firstcolpos(Arow);Acolpos!=-1;Acolpos=A.nextcolpos(Arow,Acolpos)) begin
-               if (B.getpos(A.getcol(Acolpos),Bcol) != -1) begin
+               int Bcolpos = B.getpos(A.getcol(Acolpos),Bcol);
+               //$display("pos of B[%d,%d] is %d\n",A.getcol(Acolpos),Bcol,Bcolpos);
+               
+               if (Bcolpos != -1) begin
                   ++nnz; // found one partial product; assume no cancellation errors
+                  //$display("pp[%d,%d] will be nonzero",Arow,Bcol);
                   break; // skip to next col of B
                end // if
             end // for(int Acolpos
@@ -55,10 +66,15 @@ class sparse_csr_tc #(parameter ROWS=1024,
       colindex = new [nnz];
       value = new [nnz];
 
+      //$display("C: nnz %d",nnz);
+
       // perform actual matrix multiplication
-      //for(int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow)) begin
       currnz = 0;
+      //for(int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow)) begin
       for(int Arow=0;Arow<A.rows;++Arow) begin
+         //$display("Row %d of A",Arow);
+         rowptr[Arow] = currnz;
+         //$display("rowptr[%d] = %d",Arow,currnz);
          for(int Bcol=0;Bcol<B.cols;++Bcol) begin
             real partialproduct = 0.0;
             bit  nz = 1'b0;
@@ -66,16 +82,21 @@ class sparse_csr_tc #(parameter ROWS=1024,
                int Bcolpos = B.getpos(A.getcol(Acolpos),Bcol);
                if (Bcolpos != -1) begin
                   partialproduct += $bitstoreal(A.getval(Acolpos)) * $bitstoreal(B.getval(Bcolpos));
+                  nz = 1'b1;
                end
             end
             if (nz) begin
+               //$display("pp[%d,%d] = %f",Arow,Bcol,partialproduct);
                value[currnz] = $realtobits(partialproduct);
                colindex[currnz] = Bcol;
                ++currnz;
             end // if (nz)
          end // for (int Bcol=0;Bcol<B.cols;++Bcol)
-         rowptr[Arow] = currnz;
       end // for (int Arow=A.firstrow();Arow!=-1;Arow=A.nextrow(Arow))
+      
+      rowptr[rows] = currnz;
+      
+      //$display("C: currnz %d nnz %d",currnz,nnz);
       
       assert(currnz == nnz);
 
@@ -89,7 +110,7 @@ class sparse_csr_tc #(parameter ROWS=1024,
          for(int Col=0;Col<cols;++Col) begin
             int pos = getpos(Row,Col);
             real val = (pos != -1) ? $bitstoreal(getval(pos)) : 0.0;
-            if (Row > rows)
+            if (Row >= rows)
               $write("      ");
             else
               $write("%5.0f ",val);
@@ -98,7 +119,7 @@ class sparse_csr_tc #(parameter ROWS=1024,
          for(int Col=0;Col<A.cols;++Col) begin
             int pos = A.getpos(Row,Col);
             real val = (pos != -1) ? $bitstoreal(A.getval(pos)) : 0.0;
-            if (Row > A.rows)
+            if (Row >= A.rows)
               $write("      ");
             else
               $write("%5.0f ",val);
@@ -107,7 +128,7 @@ class sparse_csr_tc #(parameter ROWS=1024,
          for(int Col=0;Col<B.cols;++Col) begin
             int pos = B.getpos(Row,Col);
             real val = (pos != -1) ? $bitstoreal(B.getval(pos)) : 0.0;
-            if (Row > B.rows)
+            if (Row >= B.rows)
               $write("      ");
             else
               $write("%5.0f ",val);

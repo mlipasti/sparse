@@ -1,7 +1,7 @@
 `include "sparse_csr_tc.svh"
 
 module sparse_csr_tb();
-   sparse_csr_tc #(.ROWS(8),.COLS(4),.DENSITY(5)
+   sparse_csr_tc #(.ROWS(7),.COLS(13),.DENSITY(75)
                 ) dut;
    
    initial begin

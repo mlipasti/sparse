@@ -4,7 +4,7 @@
 // a testbench
 class sparse_csr #(parameter ROWS=1024,
                    parameter COLS=1024,
-                   parameter DENSITY=5 // percentage nz
+                   parameter DENSITY=5 // odds out of 1024
                    );
 
    localparam ISZERO=100-DENSITY;
@@ -31,24 +31,34 @@ class sparse_csr #(parameter ROWS=1024,
       // determine NNZ values in bitmask
       for(int Row=0;Row<rows;++Row) begin
 	     for(int Col=0;Col<cols;++Col) begin
-            randcase
-              DENSITY: begin
-                 mask[Row][Col] = 1'b1;
-                 nnz += 1;
-              end
-              ISZERO:
-                mask[Row][Col] = 1'b0;
-            endcase // randcase
+            int randval = $urandom_range(0,1023);
+            if (randval <= DENSITY) begin
+               mask[Row][Col] = 1'b1;
+               nnz += 1;
+               //$display("nz at %d,%d",Row,Col);
+            end else begin
+               mask[Row][Col] = 1'b0;
+            end
+            //randcase
+            //  DENSITY: begin
+            //     mask[Row][Col] = 1'b1;
+            //     nnz += 1;
+            //     //$display("nz at %d,%d",Row,Col);
+            //  end
+            //  ISZERO:
+            //    mask[Row][Col] = 1'b0;
+            //endcase // randcase
          end
       end // for (int Row=0;Row<rows;++Row)
 
       // allocate space in colindex and value
       colindex = new [nnz];
       value = new [nnz];
-
+      
       // populate CSR structures
       for(int Row=0;Row<rows;++Row) begin
          rowptr[Row] = currnz;
+         //$display("rowptr[%d] = %d",Row,currnz);
 	     for(int Col=0;Col<cols;++Col) begin
             if (mask[Row][Col]) begin
                colindex[currnz] = Col;
@@ -58,7 +68,8 @@ class sparse_csr #(parameter ROWS=1024,
          end
       end
       rowptr[rows] = currnz;
-      assert(currnz == nnz + 1);
+      //$display("rowptr[%d] = %d",rows,currnz);
+      assert(currnz == nnz);
    endfunction: new
 
    // access functions
@@ -81,19 +92,20 @@ class sparse_csr #(parameter ROWS=1024,
    // iterators
    // row iterators return row numbers
    function int firstrow();
-      return nextrow(0);
+      return nextrow(-1);
    endfunction: firstrow
 
    function int nextrow(int currrow);
-      int retval=currrow;
-      while((retval < rows) && (rowptr[retval] == rowptr[++retval])) begin
+      int retval=currrow+1;
+      while((retval < rows) && (rowptr[retval] == rowptr[retval+1])) begin
+         retval += 1;
       end
-      return (retval < rows) ? retval - 1 : -1;
+      return (retval < rows) ? retval : -1;
    endfunction: nextrow
 
    // column iterators return position (index into col/value vectors)
    function int firstcolpos(int row);
-      return nextcolpos(row,0);
+      return nextcolpos(row,rowptr[row]-1);
    endfunction: firstcolpos
 
    function int nextcolpos(int row, int currpos);
@@ -102,6 +114,21 @@ class sparse_csr #(parameter ROWS=1024,
    endfunction: nextcolpos
 
 
+   function void dump();
+      // display matrix for debugging purposes
+      //$display("Matrix nnz %d",nnz);
+      for(int Row=0;Row<rows;++Row) begin
+         for(int Col=0;Col<cols;++Col) begin
+            int pos = getpos(Row,Col);
+            real val = (pos != -1) ? $bitstoreal(getval(pos)) : 0.0;
+            if (Row > rows)
+              $write("      ");
+            else
+              $write("%5.0f ",val);
+         end // for(int Col
+         $write("\n");
+      end // for (int Row=0;Row<DIM;++Row)
+   endfunction: dump
 
    // generate random double value:
    // 1 bit sign, 11 bit exponent, 52 bit fraction
